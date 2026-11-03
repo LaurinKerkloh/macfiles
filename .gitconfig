@@ -1,6 +1,6 @@
 [user]
-    name = Jonas Weber
-    email = jonas@nerdgeschoss.de
+    name = Laurin Kerkloh
+    email = laurin@nerdgeschoss.de
 [filter "lfs"]
     process = git-lfs filter-process
     required = true
