@@ -34,6 +34,21 @@ case "$confirm" in
         ;;
 esac
 
+# Install all tools required by the project's mise/version files
+echo "Installing mise tools..."
+mise install
+
+# Install JS packages with yarn (also for projects using npm)
+if [[ -f package.json ]]; then
+    if ! command -v yarn >/dev/null 2>&1; then
+        echo "Installing yarn..."
+        npm install -g yarn
+        mise reshim
+    fi
+    echo "Installing JS packages..."
+    yarn install
+fi
+
 # Install foreman if it doesn't exist
 if $(gem list --no-installed --exact --silent foreman); then
     echo "Installing foreman..."
@@ -51,13 +66,34 @@ else
     SETUP_FORMATION_PID=$!
 fi
 
+# On macOS, shim commands that project setup scripts assume from Linux
+SHIM_DIR="$(mktemp -d)"
+if [[ "$(uname)" == "Darwin" ]]; then
+    # Redirect copies into Linux font dirs to the user's font dir
+    cat > "$SHIM_DIR/cp" <<'EOF'
+#!/usr/bin/env bash
+args=()
+for arg in "$@"; do
+    [[ "$arg" == /usr/share/fonts* ]] && arg="$HOME/Library/Fonts/"
+    args+=("$arg")
+done
+exec /bin/cp "${args[@]}"
+EOF
+    # macOS picks up new fonts by itself, so fc-cache is optional
+    if ! command -v fc-cache >/dev/null 2>&1; then
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$SHIM_DIR/fc-cache"
+    fi
+    chmod +x "$SHIM_DIR"/*
+fi
+
 cleanup() {
     kill -TERM -- "-$SETUP_FORMATION_PID" 2>/dev/null || true
     wait "$SETUP_FORMATION_PID" 2>/dev/null || true
+    rm -rf "$SHIM_DIR"
 }
 trap cleanup SIGINT SIGTERM EXIT
 
 echo "Giving the setup formation some time to start up..."
 sleep 5
 
-bin/setup --skip-server
+PATH="$SHIM_DIR:$PATH" bin/setup --skip-server
