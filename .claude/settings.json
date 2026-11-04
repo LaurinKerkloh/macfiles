@@ -1,7 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "theme": "dark",
-  "editorMode": "vim",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "permissions": {
     "ask": [
       "Bash(gh)",
@@ -24,9 +27,9 @@
       }
     ]
   },
-  "attribution": {
-    "commit": "",
-    "pr": "",
-    "sessionUrl": false
+  "theme": "dark",
+  "editorMode": "vim",
+  "enabledPlugins": {
+    "ruby-lsp@claude-plugins-official": true
   }
 }
