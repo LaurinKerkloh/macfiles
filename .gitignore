@@ -1,2 +1,7 @@
 # Built on first use by .claude/hooks/build-notifier.sh
 .claude/hooks/Claude Code Notifier.app/
+
+# Docker/OrbStack runtime state (only config.json is tracked)
+.docker/buildx/
+.docker/cli-plugins/
+.docker/contexts/

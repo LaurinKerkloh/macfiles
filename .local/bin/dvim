@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# dvim — Neovim running inside the project's devcontainer, with the UI on the host.
+#
+#   dvim [files...]   start a fresh nvim server in the devcontainer and attach to it.
+#                     The container is set up on first use and remembered on the tmux
+#                     session, so further dvim panes in that session attach right away.
+#   dvim --setup      run the devcontainer setup again (e.g. after changing devcontainer.json)
+#   dvim --rebuild    recreate the container (needed if it was created without dvim's mounts)
+#
+# Each dvim gets its own nvim server, which exits when its pane goes away
+# (see ~/.config/nvim/lua/config/dvim.lua).
+set -euo pipefail
+
+die() { echo "dvim: $*" >&2; exit 1; }
+
+setup=false
+rebuild=false
+case "${1:-}" in
+  --setup) setup=true; shift ;;
+  --rebuild) setup=true; rebuild=true; shift ;;
+esac
+
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+[[ -e "$root/.devcontainer" || -e "$root/.devcontainer.json" ]] || die "no devcontainer config in $root"
+
+session_get() { [[ -n "${TMUX:-}" ]] && tmux show-options -qv "@dvim_$1" || true; }
+session_set() { [[ -z "${TMUX:-}" ]] || tmux set-option "@dvim_$1" "$2"; }
+
+container="$(session_get container)"
+if [[ "$(session_get root)" != "$root" || -z "$container" ]] ||
+  [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != "true" ]]; then
+  setup=true
+fi
+
+# Installs nvim (same version as on the host) and the tools the config needs.
+install_tools() {
+  docker exec -i -u root "$container" bash -s -- "$(nvim --version | head -1 | sed 's/^NVIM v//')" <<'EOF'
+set -euo pipefail
+version="$1"
+case "$(uname -m)" in
+  aarch64 | arm64) arch=arm64 ;;
+  *) arch=x86_64 ;;
+esac
+
+if [[ "$(nvim --version 2>/dev/null | head -1)" != "NVIM v$version" ]]; then
+  echo "dvim: installing nvim $version"
+  rm -rf /opt/nvim && mkdir -p /opt/nvim
+  curl -fsSL "https://github.com/neovim/neovim/releases/download/v$version/nvim-linux-$arch.tar.gz" |
+    tar -xz -C /opt/nvim --strip-components=1
+  ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
+fi
+
+packages=()
+command -v rg >/dev/null || packages+=(ripgrep)
+command -v fzf >/dev/null || packages+=(fzf)
+command -v fd >/dev/null || command -v fdfind >/dev/null || packages+=(fd-find)
+command -v cc >/dev/null || packages+=(build-essential)
+if ((${#packages[@]})); then
+  echo "dvim: installing ${packages[*]}"
+  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${packages[@]}" >/dev/null
+fi
+if ! command -v fd >/dev/null && command -v fdfind >/dev/null; then
+  ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+fi
+
+if ! command -v tree-sitter >/dev/null; then
+  echo "dvim: installing tree-sitter"
+  curl -fsSL "https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-linux-$arch.gz" |
+    gunzip >/usr/local/bin/tree-sitter
+  chmod +x /usr/local/bin/tree-sitter
+fi
+EOF
+}
+
+# The devcontainer CLI doesn't forward host git credentials like VS Code does, so hand the
+# container the gh token plus a credential helper that uses it (gh comes with the image).
+git_env=()
+if token="$(gh auth token 2>/dev/null)"; then
+  git_env=(
+    "GH_TOKEN=$token"
+    GIT_CONFIG_COUNT=1
+    GIT_CONFIG_KEY_0=credential.https://github.com.helper
+    "GIT_CONFIG_VALUE_0=!gh auth git-credential"
+  )
+fi
+
+if $setup; then
+  remote_home="${DVIM_REMOTE_HOME:-/root}"
+  # External volumes, so compose doesn't prefix them with the project name and every
+  # project shares the same Linux builds of plugins, mason packages and parsers.
+  docker volume create dvim-nvim-data >/dev/null
+  docker volume create dvim-nvim-state >/dev/null
+  args=(
+    --workspace-folder "$root"
+    --mount "type=bind,source=$(realpath "$HOME/.config/nvim"),target=$remote_home/.config/nvim"
+    --mount "type=volume,source=dvim-nvim-data,target=$remote_home/.local/share/nvim,external=true"
+    --mount "type=volume,source=dvim-nvim-state,target=$remote_home/.local/state/nvim,external=true"
+  )
+  for env in ${git_env[@]+"${git_env[@]}"}; do args+=(--remote-env "$env"); done
+  $rebuild && args+=(--remove-existing-container)
+
+  result="$(devcontainer up "${args[@]}" | tail -n1)"
+  [[ "$(jq -r .outcome <<<"$result")" == "success" ]] || die "devcontainer up failed: $result"
+  container="$(jq -r .containerId <<<"$result")"
+
+  docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$container" |
+    grep -qx "$remote_home/.config/nvim" ||
+    die "the container was created without dvim's mounts — run 'dvim --rebuild'"
+
+  install_tools
+
+  # With network_mode "service:x" the container shares x's network, so the IP lives there.
+  network_mode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$container")"
+  network_container="$container"
+  [[ "$network_mode" == container:* ]] && network_container="${network_mode#container:}"
+  ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "$network_container" | head -1)"
+  [[ -n "$ip" ]] || die "could not determine the container's IP"
+  user="$(jq -r .remoteUser <<<"$result")"
+  workspace="$(jq -r .remoteWorkspaceFolder <<<"$result")"
+
+  session_set root "$root"
+  session_set container "$container"
+  session_set ip "$ip"
+  session_set user "$user"
+  session_set workspace "$workspace"
+else
+  ip="$(session_get ip)"
+  user="$(session_get user)"
+  workspace="$(session_get workspace)"
+fi
+
+# Map host paths into the container: the working directory and any absolute file arguments.
+cwd="$workspace${PWD#"$root"}"
+files=()
+for file in "$@"; do
+  [[ "$file" == "$root"* ]] && file="$workspace${file#"$root"}"
+  files+=("$file")
+done
+
+for _ in 1 2 3; do
+  port=$((20000 + RANDOM % 10000))
+  exec_env=(-e DVIM=1)
+  for env in ${git_env[@]+"${git_env[@]}"}; do exec_env+=(-e "$env"); done
+  docker exec -d -u "$user" -w "$cwd" "${exec_env[@]}" "$container" \
+    bash -lc 'exec nvim --headless --listen "$0" "$@"' "$ip:$port" ${files[@]+"${files[@]}"}
+  for _ in $(seq 50); do
+    if nc -z "$ip" "$port" 2>/dev/null; then
+      exec nvim --remote-ui --server "$ip:$port"
+    fi
+    sleep 0.1
+  done
+done
+die "nvim server in $container did not come up"

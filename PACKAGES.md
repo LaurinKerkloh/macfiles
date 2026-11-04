@@ -26,3 +26,4 @@ lazygit
 jq
 claude-code
 localsend
+devcontainer
