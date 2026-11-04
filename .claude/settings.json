@@ -11,5 +11,17 @@
       "Bash(git -C * push)",
       "Bash(git -C * push *)"
     ]
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.message' | { read -r m; osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title \"Claude Code\" sound name \"Glass\"' -e 'end run' \"$m\"; }"
+          }
+        ]
+      }
+    ]
   }
 }
