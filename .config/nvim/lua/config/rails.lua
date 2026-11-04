@@ -2,31 +2,19 @@
 local term = { win = nil, buf = nil }
 
 local function split_and_run(command)
-    -- Under dvim nvim runs in the devcontainer, where the host's tmux is out of reach.
-    if vim.env.DVIM == "1" then
-        if term.win and vim.api.nvim_win_is_valid(term.win) then
-            vim.api.nvim_set_current_win(term.win)
-        else
-            vim.cmd("botright vsplit | vertical resize " .. math.floor(vim.o.columns / 3))
-            term.win = vim.api.nvim_get_current_win()
-        end
-        local previous = term.buf
-        vim.cmd.terminal(command)
-        term.buf = vim.api.nvim_get_current_buf()
-        -- Stops the previous run along with its buffer.
-        if previous and vim.api.nvim_buf_is_valid(previous) then
-            vim.api.nvim_buf_delete(previous, { force = true })
-        end
-        return
+    if term.win and vim.api.nvim_win_is_valid(term.win) then
+        vim.api.nvim_set_current_win(term.win)
+    else
+        vim.cmd("botright vsplit | vertical resize " .. math.floor(vim.o.columns / 3))
+        term.win = vim.api.nvim_get_current_win()
     end
-
-    local pane_id = vim.fn.system({ "tmux", "split-window", "-h", "-p 33", "-P", "-F", "#{pane_id}" }):gsub("%s+$", "")
-
-    while vim.fn.system({ "tmux", "display-message", "-p", "-t", pane_id, "#{pane_current_command}" }):gsub("%s+$", "") ~= "zsh" do
-        vim.wait(10)
+    local previous = term.buf
+    vim.cmd.terminal(command)
+    term.buf = vim.api.nvim_get_current_buf()
+    -- Stops the previous run along with its buffer.
+    if previous and vim.api.nvim_buf_is_valid(previous) then
+        vim.api.nvim_buf_delete(previous, { force = true })
     end
-
-    vim.fn.system({ "tmux", "send-keys", "-t", pane_id, command, "Enter" })
 end
 
 local function watchexec(command)
