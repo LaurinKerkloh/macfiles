@@ -6,6 +6,18 @@ end
 -- The UI runs on the host, so the clipboard has to go through the terminal.
 vim.g.clipboard = "osc52"
 
+-- Hand URLs (gx, vim.ui.open) to dvim on the host, which opens them in the browser.
+if vim.env.DVIM_OPEN_FILE then
+    vim.ui.open = function(url)
+        local tmp = vim.env.DVIM_OPEN_FILE .. ".tmp"
+        local file = assert(io.open(tmp, "w"))
+        file:write(url)
+        file:close()
+        os.rename(tmp, vim.env.DVIM_OPEN_FILE)
+        return nil, nil
+    end
+end
+
 -- Each server belongs to one dvim pane: once no UI is attached anymore, exit.
 local function quit_if_detached()
     if #vim.api.nvim_list_uis() > 0 then

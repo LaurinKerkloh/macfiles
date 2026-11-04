@@ -1,21 +1,52 @@
 #!/usr/bin/env bash
 # dvim — Neovim running inside the project's devcontainer, with the UI on the host.
-#
-#   dvim [files...]   start a fresh nvim server in the devcontainer and attach to it.
-#                     The container is set up on first use and remembered on the tmux
-#                     session, so further dvim panes in that session attach right away.
-#   dvim --setup      run the devcontainer setup again (e.g. after changing devcontainer.json)
-#   dvim --rebuild    recreate the container (needed if it was created without dvim's mounts)
-#
 # Each dvim gets its own nvim server, which exits when its pane goes away
 # (see ~/.config/nvim/lua/config/dvim.lua).
 set -euo pipefail
 
 die() { echo "dvim: $*" >&2; exit 1; }
 
+usage() {
+  cat <<'EOF'
+dvim — Neovim inside the project's devcontainer, with the UI on the host
+
+Usage:
+  dvim [files...]   Open nvim in the devcontainer, in the directory matching the current one
+  dvim --setup      Run the container setup again (e.g. after changing devcontainer.json)
+  dvim --rebuild    Recreate the container (needed if VS Code created it without dvim's mounts)
+  dvim --help       Show this help
+
+Run it inside a git repo with a .devcontainer, ideally inside tmux. The first dvim in a
+tmux session runs `devcontainer up`; the container is then remembered on the session,
+so further dvim panes attach right away.
+
+Every dvim starts its own nvim server, so panes are independent editors. Closing the pane
+stops its server. Unsaved buffers keep their swap files, so you can recover them later.
+
+In the container:
+  ~/.config/nvim            your host config, bind-mounted (edits apply right away)
+  ~/.local/{share,state}/nvim
+                            volumes dvim-nvim-data/-state, shared by all projects
+                            (Linux plugins, mason packages, treesitter parsers)
+  nvim, rg, fzf, fd, cc, tree-sitter
+                            installed automatically if missing
+  git credentials           your `gh auth token`, also inside nvim
+  clipboard                 OSC 52 through the terminal (tmux: set-clipboard on)
+
+Requirements:
+  OrbStack (container IPs reachable from the Mac), devcontainer, gh, jq, nc.
+  Your terminal needs macOS Local Network access
+  (System Settings → Privacy & Security → Local Network).
+
+Environment:
+  DVIM_REMOTE_HOME          home directory of the container user (default: /root)
+EOF
+}
+
 setup=false
 rebuild=false
 case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
   --setup) setup=true; shift ;;
   --rebuild) setup=true; rebuild=true; shift ;;
 esac
@@ -69,6 +100,14 @@ if ! command -v tree-sitter >/dev/null; then
     gunzip >/usr/local/bin/tree-sitter
   chmod +x /usr/local/bin/tree-sitter
 fi
+
+if ! command -v watchexec >/dev/null; then
+  echo "dvim: installing watchexec"
+  tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/watchexec/watchexec/releases/latest)"
+  version="${tag##*/v}"
+  curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v$version/watchexec-$version-$(uname -m)-unknown-linux-musl.tar.xz" |
+    tar -xJ -C /usr/local/bin --strip-components=1 --wildcards '*/watchexec'
+fi
 EOF
 }
 
@@ -115,19 +154,39 @@ if $setup; then
   [[ "$network_mode" == container:* ]] && network_container="${network_mode#container:}"
   ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "$network_container" | head -1)"
   [[ -n "$ip" ]] || die "could not determine the container's IP"
+  # OrbStack names compose containers <service>.<project>.orb.local, which survives recreation.
+  host="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}.{{index .Config.Labels "com.docker.compose.project"}}.orb.local' "$network_container")"
+  [[ "$host" == *"<no value>"* ]] && host="$ip"
   user="$(jq -r .remoteUser <<<"$result")"
   workspace="$(jq -r .remoteWorkspaceFolder <<<"$result")"
 
   session_set root "$root"
   session_set container "$container"
   session_set ip "$ip"
+  session_set host "$host"
   session_set user "$user"
   session_set workspace "$workspace"
 else
   ip="$(session_get ip)"
+  host="$(session_get host)"
   user="$(session_get user)"
   workspace="$(session_get workspace)"
 fi
+
+# The server can't run host commands, so its vim.ui.open writes URLs to a file in the
+# shared .git directory, and this opens them in the host's browser while the pane lives.
+watch_open() {
+  local file="$1" pid="$2" url
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ -s "$file" ]]; then
+      url="$(<"$file")"
+      rm -f "$file"
+      if [[ "$url" =~ ^https?:// ]]; then open "$url"; fi
+    fi
+    sleep 0.5
+  done
+  rm -f "$file"
+}
 
 # Map host paths into the container: the working directory and any absolute file arguments.
 cwd="$workspace${PWD#"$root"}"
@@ -139,15 +198,19 @@ done
 
 for _ in 1 2 3; do
   port=$((20000 + RANDOM % 10000))
-  exec_env=(-e DVIM=1)
+  exec_env=(-e DVIM=1 -e "DVIM_HOST=${host:-$ip}")
+  [[ -d "$root/.git" ]] && exec_env+=(-e "DVIM_OPEN_FILE=$workspace/.git/dvim-open-$port")
   for env in ${git_env[@]+"${git_env[@]}"}; do exec_env+=(-e "$env"); done
   docker exec -d -u "$user" -w "$cwd" "${exec_env[@]}" "$container" \
     bash -lc 'exec nvim --headless --listen "$0" "$@"' "$ip:$port" ${files[@]+"${files[@]}"}
   for _ in $(seq 50); do
     if nc -z "$ip" "$port" 2>/dev/null; then
+      if [[ -d "$root/.git" ]]; then
+        watch_open "$root/.git/dvim-open-$port" $$ </dev/null >/dev/null 2>&1 &
+      fi
       exec nvim --remote-ui --server "$ip:$port"
     fi
     sleep 0.1
   done
 done
-die "nvim server in $container did not come up"
+die "nvim server at $ip:$port did not come up (if 'nc -z $ip $port' says 'No route to host', allow your terminal under System Settings → Privacy & Security → Local Network)"
