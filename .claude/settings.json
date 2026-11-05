@@ -9,6 +9,8 @@
     "ask": [
       "Bash(gh)",
       "Bash(gh *)",
+      "Bash(heroku)",
+      "Bash(heroku *)",
       "Bash(git push)",
       "Bash(git push *)",
       "Bash(git -C * push)",
