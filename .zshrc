@@ -115,6 +115,7 @@ ZLE_REMOVE_SUFFIX_CHARS=$' \t\n;&'
 
 # Autosuggestions
 source "$HOMEBREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+bindkey '^Y' autosuggest-accept
 
 # Syntax highlighting
 source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
