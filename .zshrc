@@ -2,6 +2,7 @@
 [[ $- != *i* ]] && return
 
 # PATH
+eval "$(/opt/homebrew/bin/brew shellenv)"
 PATH="$HOME/.local/bin:$PATH"
 # PATH="$HOME/go/bin:$PATH"
 
