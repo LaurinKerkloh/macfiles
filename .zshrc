@@ -41,10 +41,12 @@ zle -N edit-command-line
 bindkey '^v' edit-command-line
 
 # Completion
-FPATH="$(brew --prefix)/share/zsh-completions:$FPATH"
+HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-$(brew --prefix)}"
+FPATH="$HOMEBREW_PREFIX/share/zsh-completions:$FPATH"
 FPATH="$HOME/.docker/completions:$FPATH"
 autoload -Uz compinit
-compinit
+# Homebrew is owned by another macOS account, which compaudit flags as insecure
+compinit -u
 
 # Case-insensitive autocomplete
 zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
