@@ -1,6 +1,6 @@
 [user]
     name = Laurin Kerkloh
-    email = laurin@nerdgeschoss.de
+    email = laurin@kerk-loh.de
 [filter "lfs"]
     process = git-lfs filter-process
     required = true
@@ -14,3 +14,6 @@
 	defaultBranch = main
 [credential "https://git.heroku.com"]
 	helper = !heroku git:credentials
+
+[includeIf "gitdir:~/code/reditus/"]
+	path = ~/code/reditus/.gitconfig
