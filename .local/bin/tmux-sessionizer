@@ -10,7 +10,7 @@ else
         (
             echo "$HOME"
             echo "$HOME/code"
-            find -L "$HOME/code" -mindepth 1 -maxdepth 1 -type d | sort
+            find -L "$HOME/code" -mindepth 1 -maxdepth 2 -type d | sort
             echo "$HOME/.macfiles"
         ) | fzf --cycle --print-query | tail -1
     )
