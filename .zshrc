@@ -143,6 +143,13 @@ tmux-sessionizer-widget() {
 zle -N tmux-sessionizer-widget
 bindkey ^f tmux-sessionizer-widget
 
+# tmux-worktreeizer
+tmux-worktreeizer-widget() {
+    tmux-worktreeizer <>$TTY
+}
+zle -N tmux-worktreeizer-widget
+bindkey ^g tmux-worktreeizer-widget
+
 # mise
 eval "$(mise activate zsh)"
 

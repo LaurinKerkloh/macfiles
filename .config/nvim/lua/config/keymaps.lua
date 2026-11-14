@@ -22,5 +22,10 @@ vim.keymap.set("v", "<m-k>", ":m '<-2<cr>gv=gv")
 -- tmux-sessionizer
 vim.keymap.set("n", "<c-f>", "<cmd>silent !tmux new-window tmux-sessionizer<cr>")
 
+-- tmux-worktreeizer
+vim.keymap.set("n", "<c-g>", function()
+    vim.fn.system({ "tmux", "new-window", "-c", vim.fn.getcwd(), "tmux-worktreeizer" })
+end)
+
 -- Format using 'formatexpr'
 vim.keymap.set("n", "<leader>f", "mpgggqG`p")

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set -e
+
+# Print the main worktree of the repository containing $1 (if any)
+main_worktree() {
+    local common_dir
+    common_dir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2> /dev/null) || return 0
+    dirname "$common_dir"
+}
+
+# Print "<session name>\t<path>" for every linked worktree of the repository at $1
+list_worktrees() {
+    local repo=$1 repo_name path branch
+    if [[ $repo == "$HOME/code/"* ]]; then
+        repo_name=${repo#"$HOME/code/"}
+    else
+        repo_name=$(basename "$repo")
+    fi
+
+    git -C "$repo" worktree list --porcelain | awk -v repo="$repo" -v name="$repo_name" '
+        function flush() {
+            if (path != "" && path != repo) {
+                if (branch == "") { branch = path; sub(".*/", "", branch) }
+                printf "%s@%s\t%s\n", name, branch, path
+            }
+            path = ""; branch = ""
+        }
+        /^worktree / { flush(); path = substr($0, 10) }
+        /^branch /   { branch = substr($0, 8); sub("^refs/heads/", "", branch) }
+        END          { flush() }
+    ' | while IFS=$'\t' read -r name path; do
+        # Skip prunable worktrees whose directory is gone
+        [[ -d $path ]] && printf "%s\t%s\n" "$name" "$path"
+    done
+}
+
+# Select the worktree to open in a (new) tmux session, current repository first
+current_repo=$(main_worktree "$PWD")
+selected=$(
+    (
+        [[ -n $current_repo ]] && echo "$current_repo"
+        find -L "$HOME/code" -mindepth 2 -maxdepth 3 -name .git -type d -exec dirname {} \; | sort
+    ) | awk '!seen[$0]++' | while read -r repo; do
+        list_worktrees "$repo"
+    done | fzf --cycle --delimiter '\t' --with-nth 1
+)
+
+# Exit if no worktree was selected
+if [[ -z $selected ]]; then
+    exit 0
+fi
+
+session_name=$(echo "${selected%%$'\t'*}" | tr .: _)
+selected=${selected#*$'\t'}
+
+# (Create and) attach/switch to the session
+if ! tmux has-session -t="$session_name" 2> /dev/null; then
+    tmux new-session -ds "$session_name" -n "$session_name" -c "$selected" -e TMUX_SESSIONIZER_ROOT_DIRECTORY="$selected"
+fi
+if [[ -n $TMUX ]]; then
+    tmux switch-client -t "$session_name"
+else
+    exec tmux attach -t "$session_name"
+fi
